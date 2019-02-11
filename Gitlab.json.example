@@ -1,0 +1,14 @@
+[
+  {
+    "ParameterKey": "IncomingCidr",
+    "ParameterValue": "127.0.0.1/32"
+  },
+  {
+    "ParameterKey": "Certificate",
+    "ParameterValue": "arn:aws:acm:xx-xxxxxxxxx-x:xxxxxxxxxxxx:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  },
+  {
+    "ParameterKey": "HostedZone",
+    "ParameterValue": "mydomain.com"
+  }
+]

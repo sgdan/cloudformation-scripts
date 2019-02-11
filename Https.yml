@@ -1,0 +1,93 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Test a simple nginx server running behind an NLB with TLS configured
+
+Parameters:
+  Certificate:
+    Type: String
+    Default: "arn:aws:acm:xx-xxxxxxxxx-x:xxxxxxxxxxxx:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  HostedZone:
+    Type: String
+    Description: Hosted zone without trailing period
+    Default: "mydomain.com"
+  AMI:
+    Type: String
+    Default: ami-0c9d48b5db609ad6e # amzn2-ami-hvm-2.0.2019.*x86_64-gp2
+  InstanceType:
+    Type: String
+    Default: t3.medium
+
+Resources:
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AMI
+      InstanceType: !Ref InstanceType
+      SubnetId: !ImportValue PrivateSubnetA
+      IamInstanceProfile: !ImportValue SimpleProfile
+      SecurityGroupIds:
+      - !ImportValue OutgoingSG
+      - !ImportValue IncomingSG
+      Tags:
+      - Key: Name
+        Value: Nginx
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            set -e
+
+            # Install latest docker version
+            amazon-linux-extras enable docker
+            yum -y install docker
+            systemctl start docker
+
+            # Run nginx
+            docker run -d --restart=unless-stopped -p 80:80 nginx
+
+  Nlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: HttpsNlb
+      Scheme: internet-facing
+      Tags:
+      - Key: Name
+        Value: Https NLB
+      Type: network
+      Subnets:
+      - !ImportValue PublicSubnetA
+      - !ImportValue PublicSubnetB
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: HttpsGroup
+      Port: 80
+      Protocol: TCP
+      VpcId: !ImportValue SimpleVpc
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: 60
+      Targets:
+      - Id: !Ref Instance
+      HealthCheckPort: 80
+      HealthCheckProtocol: TCP
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+      - CertificateArn: !Ref Certificate
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref Nlb
+      Port: 443
+      Protocol: TLS
+  DnsEntry:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "nginx.${HostedZone}."
+      AliasTarget:
+        DNSName: !GetAtt Nlb.DNSName
+        HostedZoneId: !GetAtt Nlb.CanonicalHostedZoneID
+      Type: A

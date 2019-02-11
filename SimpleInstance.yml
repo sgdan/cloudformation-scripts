@@ -1,0 +1,25 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: EC2 linux instance supporting Session Manager connections
+
+Parameters:
+  AMI:
+    Type: String
+    Default: ami-0c9d48b5db609ad6e # amzn2-ami-hvm-2.0.2019.*x86_64-gp2
+  InstanceType:
+    Type: String
+    Default: t3.small
+
+Resources:
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AMI
+      InstanceType: !Ref InstanceType
+      SubnetId: !ImportValue PrivateSubnetA
+      IamInstanceProfile: !ImportValue SimpleProfile
+      SecurityGroupIds:
+      - !ImportValue OutgoingSG
+      Tags:
+      - Key: Name
+        Value: Simple Instance

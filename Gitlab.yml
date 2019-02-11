@@ -1,0 +1,171 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: EC2 instance running GitLab behind NLB (with TLS cert)
+
+Parameters:
+  Certificate:
+    Type: String
+    Default: "arn:aws:acm:xx-xxxxxxxxx-x:xxxxxxxxxxxx:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  HostedZone:
+    Type: String
+    Description: Hosted zone without trailing period
+    Default: "mydomain.com"
+  AMI:
+    Type: String
+    Default: ami-0c9d48b5db609ad6e # amzn2-ami-hvm-2.0.2019.*x86_64-gp2
+  InstanceType:
+    Type: String
+    Default: t3.medium
+  IncomingCidr:
+    Type: String
+    Description: External IP range allowed to connect
+    Default: 127.0.0.1/32
+
+Resources:
+  Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref AMI
+      InstanceType: !Ref InstanceType
+      SubnetId: !ImportValue PrivateSubnetA
+      IamInstanceProfile: !ImportValue SimpleProfile
+      SecurityGroupIds:
+      - !ImportValue OutgoingSG
+      - !ImportValue IncomingSG
+      - !Ref SecurityGroup
+      BlockDeviceMappings:
+      - DeviceName: /dev/xvda
+        Ebs:
+          VolumeSize: 10 # root device
+      - DeviceName: /dev/sdm
+        Ebs:
+          VolumeSize: 20 # gitlab data
+          Encrypted: true
+      - DeviceName: /dev/sdn
+        Ebs:
+          VolumeSize: 20 # docker data
+          Encrypted: true
+      Tags:
+      - Key: Name
+        Value: Gitlab
+      UserData:
+        Fn::Base64:
+          !Sub |
+            #!/bin/bash
+            set -e
+
+            # map gitlab and docker block devices
+            mkfs -t ext4 /dev/sdm
+            mkfs -t ext4 /dev/sdn
+            mkdir -p /srv/gitlab /var/lib/docker
+            mount /dev/sdm /srv/gitlab
+            mount /dev/sdn /var/lib/docker
+            echo '/dev/sdm /srv/gitlab ext4 defaults,nofail 0 2' >> /etc/fstab
+            echo '/dev/sdn /var/lib/docker ext4 defaults,nofail 0 2' >> /etc/fstab
+
+            # Install latest docker version
+            amazon-linux-extras enable docker
+            yum -y install docker
+            systemctl start docker
+
+            # Run gitlab. Just expose port 80 since NLB will terminate HTTPS connections
+            # Port 22 is required to support ssh connections to gitlab, but map it to port
+            # 2222 so it won't conflict with the default ssh. NLB should forward to 2222
+            docker run -d --restart=unless-stopped \
+              --hostname gitlab.${HostedZone} \
+              --name gitlab \
+              -p 80:80 -p 2222:22 \
+              -v /srv/gitlab/config:/etc/gitlab \
+              -v /srv/gitlab/logs:/var/log/gitlab \
+              -v /srv/gitlab/data:/var/opt/gitlab \
+              gitlab/gitlab-ce:latest
+
+  Nlb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: GitlabNlb
+      Scheme: internet-facing
+      Tags:
+      - Key: Name
+        Value: Gitlab NLB
+      Type: network
+      Subnets:
+      - !ImportValue PublicSubnetA
+      - !ImportValue PublicSubnetB
+  HttpTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: Gitlab-Http-Group
+      Port: 80
+      Protocol: TCP
+      VpcId: !ImportValue SimpleVpc
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: 30
+      Targets:
+      - Id: !Ref Instance
+  SshTargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: Gitlab-Ssh-Group
+      Port: 2222
+      Protocol: TCP
+      VpcId: !ImportValue SimpleVpc
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: 30
+      Targets:
+      - Id: !Ref Instance
+  HttpsListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+      - CertificateArn: !Ref Certificate
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref HttpTargetGroup
+      LoadBalancerArn: !Ref Nlb
+      Port: 443
+      Protocol: TLS
+  SshListener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref SshTargetGroup
+      LoadBalancerArn: !Ref Nlb
+      Port: 22
+      Protocol: TCP
+  DnsEntry:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "gitlab.${HostedZone}."
+      AliasTarget:
+        DNSName: !GetAtt Nlb.DNSName
+        HostedZoneId: !GetAtt Nlb.CanonicalHostedZoneID
+      Type: A
+
+  # Allow incoming SSH connections on port 2222 (mapped from port 22)
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: SSH-SG
+      GroupDescription: Allow incoming ssh connections from internet
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 2222
+        ToPort: 2222
+        CidrIp: !Ref IncomingCidr
+      # Allow connections from inside the VPC for NLB health checks
+      - IpProtocol: tcp
+        FromPort: 2222
+        ToPort: 2222
+        CidrIp: !ImportValue VpcCidr
+      SecurityGroupEgress:
+      - IpProtocol: -1
+        CidrIp: 127.0.0.1/32 # Overwrite default egress rule
+      Tags:
+      - Key: Name
+        Value: Incoming Ssh SG
+      VpcId: !ImportValue SimpleVpc

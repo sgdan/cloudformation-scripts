@@ -1,0 +1,256 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Test VPC containing 2 private subnets and NAT gateway
+
+Parameters:
+  VpcCidr:
+    Type: String
+    Default: 10.0.0.0/16
+  SubnetCount:
+    Type: String
+    Default: 6
+  CidrBits:
+    Type: String
+    Default: 5
+  IncomingCidr:
+    Type: String
+    Description: External IP range allowed to connect
+    Default: 127.0.0.1/32
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: !Ref VpcCidr
+      Tags:
+      - Key: Name
+        Value: Simple VPC
+  
+  # 2 public subnets in different zones (one for NAT)
+  PublicSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [3, !Cidr [!Ref VpcCidr, !Ref SubnetCount, !Ref CidrBits]]
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName} Public A
+  PublicSubnetRouteA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MainRouteTable
+      SubnetId: !Ref PublicSubnetA
+  PublicSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [4, !Cidr [!Ref VpcCidr, !Ref SubnetCount, !Ref CidrBits]]
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: true
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName} Public B
+  PublicSubnetRouteB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref MainRouteTable
+      SubnetId: !Ref PublicSubnetB
+
+  # 2 private subnets in different availability zones
+  PrivateSubnetA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: !Select [0, !Cidr [!Ref VpcCidr, !Ref SubnetCount, !Ref CidrBits]]
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName} Private A
+  PrivateSubnetB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: !Select [1, !Cidr [!Ref VpcCidr, !Ref SubnetCount, !Ref CidrBits]]
+      VpcId: !Ref VPC
+      MapPublicIpOnLaunch: false
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName} Private B
+  PrivateSubnetRouteA:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref NatRouteTable
+      SubnetId: !Ref PrivateSubnetA
+  PrivateSubnetRouteB:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      RouteTableId: !Ref NatRouteTable
+      SubnetId: !Ref PrivateSubnetB
+
+  # Internet Gateway for public subnets
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties: 
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName} Gateway
+  GatewayAttachment:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      InternetGatewayId: !Ref InternetGateway
+      VpcId: !Ref VPC
+  MainRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName} Main Route Table
+  MainRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref MainRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # NAT Gateway for private subnets
+  NatEip:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+  NatGateway:
+    Type: AWS::EC2::NatGateway
+    Properties: 
+      AllocationId: !GetAtt [NatEip, AllocationId]
+      SubnetId: !Ref PublicSubnetA
+      Tags: 
+      - Key: Name
+        Value: !Sub ${AWS::StackName} NAT
+  NatRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties: 
+      VpcId: !Ref VPC
+      Tags:
+      - Key: Name
+        Value: !Sub ${AWS::StackName} NAT Route Table
+  NatRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref NatRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NatGateway
+
+  # IAM configuration to support Session Manager
+  SimpleProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - !Ref SessionManagerRole
+  SessionManagerRole:
+    Type: AWS::IAM::Role
+    Properties: 
+      AssumeRolePolicyDocument: 
+        Version: "2012-10-17"
+        Statement: 
+          - 
+            Effect: "Allow"
+            Principal: 
+              Service: 
+                - "ec2.amazonaws.com"
+            Action: 
+              - "sts:AssumeRole"
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+
+  # Security group to support internet access from private subnet via NAT
+  OutgoingSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: OutgoingSG
+      GroupDescription: Allow egress to internet
+      SecurityGroupEgress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: 0.0.0.0/0
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: 0.0.0.0/0
+      Tags:
+      - Key: Name
+        Value: Outgoing SG
+      VpcId: !Ref VPC
+
+  # Security group to incoming connections from the internet
+  IncomingSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: IncomingSG
+      GroupDescription: Allow incoming connections from the internet
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: !Ref IncomingCidr
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: !Ref IncomingCidr
+      # Allow connections from inside the VPC for NLB health checks
+      - IpProtocol: tcp
+        FromPort: 80
+        ToPort: 80
+        CidrIp: !Ref VpcCidr
+      - IpProtocol: tcp
+        FromPort: 443
+        ToPort: 443
+        CidrIp: !Ref VpcCidr
+      SecurityGroupEgress:
+      - IpProtocol: -1
+        CidrIp: 127.0.0.1/32 # Overwrite default egress rule
+      Tags:
+      - Key: Name
+        Value: Incoming SG
+      VpcId: !Ref VPC
+
+Outputs:
+  VPC:
+    Value: !Ref VPC
+    Export:
+      Name: SimpleVpc
+  VpcCidr:
+    Value: !GetAtt VPC.CidrBlock
+    Export:
+      Name: VpcCidr
+  PublicSubnetA:
+    Value: !Ref PublicSubnetA
+    Export:
+      Name: PublicSubnetA
+  PublicSubnetB:
+    Value: !Ref PublicSubnetB
+    Export:
+      Name: PublicSubnetB
+  PrivateSubnetA:
+    Value: !Ref PrivateSubnetA
+    Export:
+      Name: PrivateSubnetA
+  PrivateSubnetB:
+    Value: !Ref PrivateSubnetB
+    Export:
+      Name: PrivateSubnetB
+  Profile:
+    Value: !Ref SimpleProfile
+    Export:
+      Name: SimpleProfile
+  OutgoingSG:
+    Value: !Ref OutgoingSG
+    Export:
+      Name: OutgoingSG
+  IncomingSG:
+    Value: !Ref IncomingSG
+    Export:
+      Name: IncomingSG
