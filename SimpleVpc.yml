@@ -149,6 +149,7 @@ Resources:
     Properties:
       Roles:
       - !Ref SessionManagerRole
+      InstanceProfileName: SimpleProfile
   SessionManagerRole:
     Type: AWS::IAM::Role
     Properties: 
