@@ -66,15 +66,37 @@ Resources:
       IpProtocol: -1
       SourceSecurityGroupId: !Ref WorkerSG
 
+  WorkerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - !Ref WorkerRole
+      InstanceProfileName: WorkerProfile
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+      - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
     Properties:
-      LaunchTemplateName: TestLaunchTemplate
+      LaunchTemplateName: WorkerTemplate
       LaunchTemplateData:
         ImageId: !Ref AMI
         InstanceType: !Ref InstanceType
         IamInstanceProfile:
-          Name: SimpleProfile
+          Name: WorkerProfile
         SecurityGroupIds:
         - !Ref WorkerSG
         - !ImportValue OutgoingSG
@@ -88,12 +110,8 @@ Resources:
               systemctl start amazon-ssm-agent
 
               /etc/eks/bootstrap.sh ${ClusterName} --kubelet-extra-args --node-labels=lifecycle=Ec2Spot
-              /opt/aws/bin/cfn-signal --exit-code $? \
-                      --stack  ${AWS::StackName} \
-                      --resource SpotNode1Group \
-                      --region ${AWS::Region}
 
-  AutoScalingGroup:
+  WorkerGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
     DependsOn: LaunchTemplate
     Properties:
