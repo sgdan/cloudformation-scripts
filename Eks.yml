@@ -25,7 +25,7 @@ Resources:
       RoleArn: !GetAtt ClusterRole.Arn
       ResourcesVpcConfig:
         SecurityGroupIds:
-        - !Ref WorkerSG
+        - !Ref MasterSG
         SubnetIds:
         - !ImportValue PrivateSubnetA
         - !ImportValue PrivateSubnetB
@@ -46,25 +46,62 @@ Resources:
       - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
       - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
 
+  MasterSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: K8s-Master-SG
+      GroupDescription: Allow connections to kubernetes control plane
+      Tags:
+      - Key: Name
+        Value: K8s Master SG
+      VpcId: !ImportValue SimpleVpc
+
   WorkerSG:
     Type: AWS::EC2::SecurityGroup
     Properties: 
       GroupName: K8s-Worker-SG
       GroupDescription: Allow connections to kubernetes worker nodes
-      SecurityGroupEgress:
-      - IpProtocol: -1
-        CidrIp: 127.0.0.1/32 # Overwrite default egress rule
       Tags:
       - Key: Name
         Value: K8s Worker SG
+      - Key: !Sub kubernetes.io/cluster/${ClusterName}
+        Value: owned
       VpcId: !ImportValue SimpleVpc
 
-  WorkerIngress:
+  MasterIngress443:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MasterSG
+      IpProtocol: TCP
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref WorkerSG
+  MasterEgress1025:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref MasterSG
+      IpProtocol: TCP
+      FromPort: 1025
+      ToPort: 65535
+      DestinationSecurityGroupId: !Ref WorkerSG
+
+  WorkerIngress443:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:
       GroupId: !Ref WorkerSG
-      IpProtocol: -1
-      SourceSecurityGroupId: !Ref WorkerSG
+      IpProtocol: TCP
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref MasterSG
+  WorkerIngress1025:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSG
+      IpProtocol: TCP
+      FromPort: 1025
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref MasterSG
+  # Worker egress default will allow all protocols to 0.0.0.0/0
 
   WorkerProfile:
     Type: AWS::IAM::InstanceProfile
@@ -90,6 +127,7 @@ Resources:
 
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
+    DependsOn: WorkerProfile
     Properties:
       LaunchTemplateName: WorkerTemplate
       LaunchTemplateData:
@@ -99,7 +137,6 @@ Resources:
           Name: WorkerProfile
         SecurityGroupIds:
         - !Ref WorkerSG
-        - !ImportValue OutgoingSG
         UserData:
           Fn::Base64:
             !Sub |
@@ -109,7 +146,7 @@ Resources:
               systemctl enable amazon-ssm-agent
               systemctl start amazon-ssm-agent
 
-              /etc/eks/bootstrap.sh ${ClusterName} --kubelet-extra-args --node-labels=lifecycle=Ec2Spot
+              /etc/eks/bootstrap.sh ${ClusterName}
 
   WorkerGroup:
     Type: AWS::AutoScaling::AutoScalingGroup
@@ -132,3 +169,10 @@ Resources:
       VPCZoneIdentifier:
       - !ImportValue PrivateSubnetA
       - !ImportValue PrivateSubnetB
+      Tags:
+      - Key: Name
+        Value: !Sub ${ClusterName}-WorkerGroup-Node
+        PropagateAtLaunch: true
+      - Key: !Sub kubernetes.io/cluster/${ClusterName}
+        Value: owned
+        PropagateAtLaunch: true
