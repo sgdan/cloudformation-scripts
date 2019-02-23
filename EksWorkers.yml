@@ -1,0 +1,67 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Auto scaling group of spot workers for EKS cluster
+
+Parameters:
+  InstanceType1:
+    Type: String
+    Default: t3.medium
+  InstanceType2:
+    Type: String
+    Default: t2.medium
+  ClusterName:
+    Type: String
+    Default: SimpleEks
+
+Resources:
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    DependsOn: WorkerProfile
+    Properties:
+      LaunchTemplateName: WorkerTemplate
+      LaunchTemplateData:
+        ImageId: !Ref AMI
+        InstanceType: !Ref InstanceType
+        IamInstanceProfile:
+          Name: WorkerProfile
+        SecurityGroupIds:
+        - !ImportValue EksWorkerSG
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              set -o xtrace
+              yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+              systemctl enable amazon-ssm-agent
+              systemctl start amazon-ssm-agent
+
+              /etc/eks/bootstrap.sh ${ClusterName}
+
+  WorkerGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: LaunchTemplate
+    Properties:
+      MinSize: 2
+      MaxSize: 2
+      DesiredCapacity: 2
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !ImportValue LaunchTemplate
+            Version: !GetAtt [LaunchTemplate, LatestVersionNumber]
+          Overrides:
+          - InstanceType: !Ref InstanceType1
+          - InstanceType: !Ref InstanceType2
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 0 # i.e. 100% spot
+          SpotAllocationStrategy: lowest-price
+      VPCZoneIdentifier:
+      - !ImportValue PrivateSubnetA
+      - !ImportValue PrivateSubnetB
+      Tags:
+      - Key: Name
+        Value: !Sub ${ClusterName}-WorkerGroup-Node
+        PropagateAtLaunch: true
+      - Key: !Sub kubernetes.io/cluster/${ClusterName}
+        Value: owned
+        PropagateAtLaunch: true

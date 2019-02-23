@@ -40,7 +40,33 @@ correct certificate details.
 - also accepts SSH connections for git
 
 Set parameters in `Gitlab.json` first.
-```
+
+```bash
 ./update.sh Gitlab
 ```
+
 Go to https://gitlab.mydomain.com, add password and login as "root".
+
+## EKS cluster with spot instances
+
+```bash
+# Create the cluster
+./update.sh EksCluster
+
+# Update local kubeconfig to point to the new cluster
+aws eks update-kubeconfig --name SimpleEks
+
+# Download config map
+curl -O https://amazon-eks.s3-us-west-2.amazonaws.com/cloudformation/2019-02-11/aws-auth-cm.yaml
+
+# Replace rolearn with the newly created WorkerRole ARN, then apply the config
+kubectl apply -f aws-auth-cm.yaml
+
+# Create workers
+./update.sh EksWorkers
+
+# Use session manager to log into a worker node and check logs
+journalctl -f -u kubelet
+
+
+```
