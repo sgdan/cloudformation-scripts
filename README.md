@@ -49,6 +49,10 @@ Go to https://gitlab.mydomain.com, add password and login as "root".
 
 ## EKS cluster with spot instances
 
+For `kubectl` may need to install aws-iam-authenticator
+- see [EKS User Guide](https://docs.aws.amazon.com/eks/latest/userguide/install-aws-iam-authenticator.html)
+- on Windows can download exe to `C:\Program Files\Amazon\AWSCLI`
+
 ```bash
 # Create the cluster
 ./update.sh EksCluster
@@ -59,14 +63,17 @@ aws eks update-kubeconfig --name SimpleEks
 # Download config map
 curl -O https://amazon-eks.s3-us-west-2.amazonaws.com/cloudformation/2019-02-11/aws-auth-cm.yaml
 
-# Replace rolearn with the newly created WorkerRole ARN, then apply the config
+# Find WorkerRole resource generated with EksCluster stack in AWS console
+# Copy its "Role ARN" into aws-auth-cm.yaml in the "rolearn" field
+# Then apply the config to the cluster
 kubectl apply -f aws-auth-cm.yaml
 
 # Create workers
 ./update.sh EksWorkers
 
-# Use session manager to log into a worker node and check logs
-journalctl -f -u kubelet
+# Workers should be created and join the cluster, check with
+kubectl get nodes
 
-
+# If there's an issue, use session manager to log into a worker node and check logs
+sudo journalctl -f -u kubelet
 ```

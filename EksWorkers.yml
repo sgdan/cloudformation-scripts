@@ -3,25 +3,31 @@ AWSTemplateFormatVersion: 2010-09-09
 Description: Auto scaling group of spot workers for EKS cluster
 
 Parameters:
+  ClusterName:
+    Type: String
+    Default: SimpleEks
+  AMI:
+    Type: String
+    Default: ami-06ade0abbd8eca425 # amazon-eks-node-1.11-v20190109
   InstanceType1:
     Type: String
     Default: t3.medium
   InstanceType2:
     Type: String
     Default: t2.medium
-  ClusterName:
+  TimeZone:
+    Description: Path relative to "/usr/share/zoneinfo/"
     Type: String
-    Default: SimpleEks
+    Default: UTC
 
 Resources:
   LaunchTemplate:
     Type: AWS::EC2::LaunchTemplate
-    DependsOn: WorkerProfile
     Properties:
       LaunchTemplateName: WorkerTemplate
       LaunchTemplateData:
         ImageId: !Ref AMI
-        InstanceType: !Ref InstanceType
+        InstanceType: !Ref InstanceType1
         IamInstanceProfile:
           Name: WorkerProfile
         SecurityGroupIds:
@@ -31,6 +37,12 @@ Resources:
             !Sub |
               #!/bin/bash
               set -o xtrace
+
+              # Set local time zone
+              rm -f /etc/localtime
+              ln -s /usr/share/zoneinfo/${TimeZone} /etc/localtime
+
+              # Enable Session Manager
               yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
               systemctl enable amazon-ssm-agent
               systemctl start amazon-ssm-agent
@@ -47,7 +59,7 @@ Resources:
       MixedInstancesPolicy:
         LaunchTemplate:
           LaunchTemplateSpecification:
-            LaunchTemplateId: !ImportValue LaunchTemplate
+            LaunchTemplateId: !Ref LaunchTemplate
             Version: !GetAtt [LaunchTemplate, LatestVersionNumber]
           Overrides:
           - InstanceType: !Ref InstanceType1

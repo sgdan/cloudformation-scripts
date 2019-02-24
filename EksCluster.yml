@@ -3,12 +3,6 @@ AWSTemplateFormatVersion: 2010-09-09
 Description: An EKS cluster
 
 Parameters:
-  AMI:
-    Type: String
-    Default: ami-06ade0abbd8eca425 # amazon-eks-node-1.11-v20190109
-  InstanceType:
-    Type: String
-    Default: t3.medium
   ClusterName:
     Type: String
     Default: SimpleEks
