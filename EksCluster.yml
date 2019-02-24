@@ -75,6 +75,30 @@ Resources:
       ToPort: 65535
       DestinationSecurityGroupId: !Ref WorkerSG
 
+  WorkerIngress80All:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSG
+      IpProtocol: TCP
+      FromPort: 80
+      ToPort: 80
+      CidrIp: 0.0.0.0/0
+  # WorkerIngress80Alb:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref WorkerSG
+  #     IpProtocol: TCP
+  #     FromPort: 80
+  #     ToPort: 80
+  #     SourceSecurityGroupId: !ImportValue IncomingSG
+  # WorkerIngress80Health:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref WorkerSG
+  #     IpProtocol: TCP
+  #     FromPort: 80
+  #     ToPort: 80
+  #     CidrIp: !ImportValue VpcCidr
   WorkerIngress443:
     Type: AWS::EC2::SecurityGroupIngress
     Properties:

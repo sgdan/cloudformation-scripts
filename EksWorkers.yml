@@ -19,6 +19,13 @@ Parameters:
     Description: Path relative to "/usr/share/zoneinfo/"
     Type: String
     Default: UTC
+  Certificate:
+    Type: String
+    Default: "arn:aws:acm:xx-xxxxxxxxx-x:xxxxxxxxxxxx:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  HostedZone:
+    Type: String
+    Description: Hosted zone without trailing period
+    Default: "mydomain.com"
 
 Resources:
   LaunchTemplate:
@@ -70,6 +77,8 @@ Resources:
       VPCZoneIdentifier:
       - !ImportValue PrivateSubnetA
       - !ImportValue PrivateSubnetB
+      TargetGroupARNs:
+      - !Ref TargetGroup
       Tags:
       - Key: Name
         Value: !Sub ${ClusterName}-WorkerGroup-Node
@@ -77,3 +86,50 @@ Resources:
       - Key: !Sub kubernetes.io/cluster/${ClusterName}
         Value: owned
         PropagateAtLaunch: true
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: EksWorkerAlb
+      Scheme: internet-facing
+      SecurityGroups:
+      - !ImportValue IncomingSG
+      Tags:
+      - Key: Name
+        Value: Eks-Worker-Alb
+      Type: application
+      Subnets:
+      - !ImportValue PublicSubnetA
+      - !ImportValue PublicSubnetB
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+      - CertificateArn: !Ref Certificate
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: Eks-Worker-Group
+      Port: 80
+      Protocol: HTTP
+      VpcId: !ImportValue SimpleVpc
+      HealthCheckPath: /healthz
+      HealthCheckPort: 80
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: 30
+  DnsEntry:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "*.${HostedZone}."
+      AliasTarget:
+        DNSName: !GetAtt Alb.DNSName
+        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+      Type: A
