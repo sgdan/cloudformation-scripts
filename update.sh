@@ -17,4 +17,4 @@ echo $name: $action
 aws cloudformation $action-stack \
   --stack-name $name \
   --template-body file://$name.yml \
-  --capabilities CAPABILITY_IAM $params
+  --capabilities CAPABILITY_NAMED_IAM $params

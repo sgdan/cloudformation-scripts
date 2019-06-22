@@ -1,0 +1,135 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: Auto scaling group of spot workers for EKS cluster
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: SimpleEks
+  AMI:
+    Type: String
+    Default: ami-06ade0abbd8eca425 # amazon-eks-node-1.11-v20190109
+  InstanceType1:
+    Type: String
+    Default: t3.small
+  InstanceType2:
+    Type: String
+    Default: t2.small
+  TimeZone:
+    Description: Path relative to "/usr/share/zoneinfo/"
+    Type: String
+    Default: UTC
+  Certificate:
+    Type: String
+    Default: "arn:aws:acm:xx-xxxxxxxxx-x:xxxxxxxxxxxx:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  HostedZone:
+    Type: String
+    Description: Hosted zone without trailing period
+    Default: "mydomain.com"
+
+Resources:
+  LaunchTemplate:
+    Type: AWS::EC2::LaunchTemplate
+    Properties:
+      LaunchTemplateName: WorkerTemplate
+      LaunchTemplateData:
+        ImageId: !Ref AMI
+        InstanceType: !Ref InstanceType1
+        IamInstanceProfile:
+          Name: WorkerProfile
+        SecurityGroupIds:
+        - !ImportValue EksWorkerSG
+        UserData:
+          Fn::Base64:
+            !Sub |
+              #!/bin/bash
+              set -ex
+
+              # Set local time zone
+              rm -f /etc/localtime
+              ln -s /usr/share/zoneinfo/${TimeZone} /etc/localtime
+
+              # Enable Session Manager
+              yum install -y https://s3.amazonaws.com/ec2-downloads-windows/SSMAgent/latest/linux_amd64/amazon-ssm-agent.rpm
+              systemctl enable amazon-ssm-agent
+              systemctl start amazon-ssm-agent
+
+              /etc/eks/bootstrap.sh ${ClusterName}
+
+  WorkerGroup:
+    Type: AWS::AutoScaling::AutoScalingGroup
+    DependsOn: LaunchTemplate
+    Properties:
+      MinSize: 2
+      MaxSize: 2
+      DesiredCapacity: 2
+      MixedInstancesPolicy:
+        LaunchTemplate:
+          LaunchTemplateSpecification:
+            LaunchTemplateId: !Ref LaunchTemplate
+            Version: !GetAtt [LaunchTemplate, LatestVersionNumber]
+          Overrides:
+          - InstanceType: !Ref InstanceType1
+          - InstanceType: !Ref InstanceType2
+        InstancesDistribution:
+          OnDemandPercentageAboveBaseCapacity: 0 # i.e. 100% spot
+          SpotAllocationStrategy: lowest-price
+      VPCZoneIdentifier:
+      - !ImportValue PrivateSubnetA
+      - !ImportValue PrivateSubnetB
+      TargetGroupARNs:
+      - !Ref TargetGroup
+      Tags:
+      - Key: Name
+        Value: !Sub ${ClusterName}-WorkerGroup-Node
+        PropagateAtLaunch: true
+      - Key: !Sub kubernetes.io/cluster/${ClusterName}
+        Value: owned
+        PropagateAtLaunch: true
+
+  Alb:
+    Type: AWS::ElasticLoadBalancingV2::LoadBalancer
+    Properties:
+      Name: EksWorkerAlb
+      Scheme: internet-facing
+      SecurityGroups:
+      - !ImportValue IncomingSG
+      Tags:
+      - Key: Name
+        Value: Eks-Worker-Alb
+      Type: application
+      Subnets:
+      - !ImportValue PublicSubnetA
+      - !ImportValue PublicSubnetB
+  Listener:
+    Type: AWS::ElasticLoadBalancingV2::Listener
+    Properties:
+      Certificates:
+      - CertificateArn: !Ref Certificate
+      DefaultActions:
+      - Type: forward
+        TargetGroupArn: !Ref TargetGroup
+      LoadBalancerArn: !Ref Alb
+      Port: 443
+      Protocol: HTTPS
+  TargetGroup:
+    Type: AWS::ElasticLoadBalancingV2::TargetGroup
+    Properties:
+      Name: Eks-Worker-Group
+      Port: 80
+      Protocol: HTTP
+      VpcId: !ImportValue SimpleVpc
+      HealthCheckPath: /healthz
+      HealthCheckPort: 80
+      TargetGroupAttributes:
+      - Key: deregistration_delay.timeout_seconds
+        Value: 30
+  DnsEntry:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      HostedZoneName: !Sub "${HostedZone}."
+      Name: !Sub "*.${HostedZone}."
+      AliasTarget:
+        DNSName: !GetAtt Alb.DNSName
+        HostedZoneId: !GetAtt Alb.CanonicalHostedZoneID
+      Type: A

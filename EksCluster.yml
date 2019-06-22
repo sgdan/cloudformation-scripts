@@ -1,0 +1,146 @@
+AWSTemplateFormatVersion: 2010-09-09
+
+Description: An EKS cluster
+
+Parameters:
+  ClusterName:
+    Type: String
+    Default: SimpleEks
+
+Resources:
+  EKS:
+    Type: "AWS::EKS::Cluster"
+    Properties:
+      Name: !Ref ClusterName
+      RoleArn: !GetAtt ClusterRole.Arn
+      ResourcesVpcConfig:
+        SecurityGroupIds:
+        - !Ref MasterSG
+        SubnetIds:
+        - !ImportValue PrivateSubnetA
+        - !ImportValue PrivateSubnetB
+  
+  ClusterRole:
+    Description: Allows EKS to manage clusters on your behalf.
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+            Effect: Allow
+            Principal:
+              Service:
+              - eks.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns: 
+      - arn:aws:iam::aws:policy/AmazonEKSClusterPolicy
+      - arn:aws:iam::aws:policy/AmazonEKSServicePolicy
+
+  MasterSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: K8s-Master-SG
+      GroupDescription: Allow connections to kubernetes control plane
+      Tags:
+      - Key: Name
+        Value: K8s Master SG
+      VpcId: !ImportValue SimpleVpc
+
+  WorkerSG:
+    Type: AWS::EC2::SecurityGroup
+    Properties: 
+      GroupName: K8s-Worker-SG
+      GroupDescription: Allow connections to kubernetes worker nodes
+      Tags:
+      - Key: Name
+        Value: K8s Worker SG
+      - Key: !Sub kubernetes.io/cluster/${ClusterName}
+        Value: owned
+      VpcId: !ImportValue SimpleVpc
+
+  MasterIngress443:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref MasterSG
+      IpProtocol: TCP
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref WorkerSG
+  MasterEgress1025:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      GroupId: !Ref MasterSG
+      IpProtocol: TCP
+      FromPort: 1025
+      ToPort: 65535
+      DestinationSecurityGroupId: !Ref WorkerSG
+
+  WorkerIngress80All:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSG
+      IpProtocol: TCP
+      FromPort: 80
+      ToPort: 80
+      CidrIp: 0.0.0.0/0
+  # WorkerIngress80Alb:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref WorkerSG
+  #     IpProtocol: TCP
+  #     FromPort: 80
+  #     ToPort: 80
+  #     SourceSecurityGroupId: !ImportValue IncomingSG
+  # WorkerIngress80Health:
+  #   Type: AWS::EC2::SecurityGroupIngress
+  #   Properties:
+  #     GroupId: !Ref WorkerSG
+  #     IpProtocol: TCP
+  #     FromPort: 80
+  #     ToPort: 80
+  #     CidrIp: !ImportValue VpcCidr
+  WorkerIngress443:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSG
+      IpProtocol: TCP
+      FromPort: 443
+      ToPort: 443
+      SourceSecurityGroupId: !Ref MasterSG
+  WorkerIngress1025:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      GroupId: !Ref WorkerSG
+      IpProtocol: TCP
+      FromPort: 1025
+      ToPort: 65535
+      SourceSecurityGroupId: !Ref MasterSG
+  # Worker egress default will allow all protocols to 0.0.0.0/0
+
+  WorkerProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+      - !Ref WorkerRole
+      InstanceProfileName: WorkerProfile
+  WorkerRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      ManagedPolicyArns:
+      - arn:aws:iam::aws:policy/AmazonEKSWorkerNodePolicy
+      - arn:aws:iam::aws:policy/AmazonEKS_CNI_Policy
+      - arn:aws:iam::aws:policy/AmazonEC2ContainerRegistryReadOnly
+      - arn:aws:iam::aws:policy/service-role/AmazonEC2RoleforSSM
+
+Outputs:
+  WorkerSG:
+    Value: !Ref WorkerSG
+    Export:
+      Name: EksWorkerSG
