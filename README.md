@@ -7,28 +7,35 @@ Some CloudFormation scripts to try out various features.
 Creates a simple VPC containing 2 private subnets. Also adds a
 NAT gateway and related resources so that instances in those subnets
 can connect out to the Internet e.g. for the following purposes:
+
 - update via package manager repo
 - download docker images from docker hub
 - connect to Session Manager's public endpoint (enables use of session manager instead of SSH)
 
 Copy `SimpleVpc.json.example` to `SimpleVpc.json` and configure the CIDR range you wish to
 restrict incoming connections to.
-```
+
+```bash
 ./update.sh SimpleVpc
 ```
+
 Once the VPC stack has been successfully created, create the instance:
-```
+
+```bash
 ./update.sh SimpleInstance
 ```
+
 You should be able to use Systems Manager > Session Manager in the AWS console to log
 in to the instance once it has been created.
 
 ## Test NLB with TLS (new AWS feature as of Jan 2019)
 
 Copy `Https.json.example` to `Https.json` and configure certificate ARN and domain.
-```
+
+```bash
 ./update.sh Https
 ```
+
 Go to https://nginx.mydomain.com and you should see the default nginx home page and the
 correct certificate details.
 
@@ -50,6 +57,7 @@ Go to https://gitlab.mydomain.com, add password and login as "root".
 ## EKS cluster with spot instances
 
 For `kubectl` may need to install aws-iam-authenticator
+
 - see [EKS User Guide](https://docs.aws.amazon.com/eks/latest/userguide/install-aws-iam-authenticator.html)
 - on Windows can download exe to `C:\Program Files\Amazon\AWSCLI`
 
@@ -75,5 +83,5 @@ kubectl apply -f aws-auth-cm.yaml
 kubectl get nodes
 
 # If there's an issue, use session manager to log into a worker node and check logs
-sudo journalctl -f -u kubelet
+sudo journalctl -fu kubelet
 ```

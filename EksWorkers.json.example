@@ -1,0 +1,10 @@
+[
+  {
+    "ParameterKey": "HostedZone",
+    "ParameterValue": "mydomain.com"
+  },
+  {
+    "ParameterKey": "Certificate",
+    "ParameterValue": "arn:aws:acm:ap-southeast-2:xxxxxxxxxxxx:certificate/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+  }
+]

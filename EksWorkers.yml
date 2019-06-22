@@ -11,10 +11,10 @@ Parameters:
     Default: ami-06ade0abbd8eca425 # amazon-eks-node-1.11-v20190109
   InstanceType1:
     Type: String
-    Default: t3.medium
+    Default: t3.small
   InstanceType2:
     Type: String
-    Default: t2.medium
+    Default: t2.small
   TimeZone:
     Description: Path relative to "/usr/share/zoneinfo/"
     Type: String
@@ -43,7 +43,7 @@ Resources:
           Fn::Base64:
             !Sub |
               #!/bin/bash
-              set -o xtrace
+              set -ex
 
               # Set local time zone
               rm -f /etc/localtime

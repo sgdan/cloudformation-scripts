@@ -8,7 +8,7 @@ Parameters:
     Default: ami-0c9d48b5db609ad6e # amzn2-ami-hvm-2.0.2019.*x86_64-gp2
   InstanceType:
     Type: String
-    Default: t3.small
+    Default: t2.micro
 
 Resources:
   Instance:
